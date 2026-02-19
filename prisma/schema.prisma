@@ -7,6 +7,17 @@ datasource db {
   url      = "file:./consumptions.db"
 }
 
+// جدول أصناف المستهلكين
+model ConsumerType {
+  id          String   @id @default(cuid())
+  code        Int      @unique
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  subscribers Subscriber[]
+}
+
 // جدول المشتركين
 model Subscriber {
   id                String   @id @default(cuid())
@@ -23,7 +34,8 @@ model Subscriber {
   installDate       String?
   lastPayment       Int?
   lastPaymentDate   String?
-  consumerType      String?
+  consumerTypeCode  Int?
+  consumerType      ConsumerType?  @relation(fields: [consumerTypeCode], references: [code])
   address           String?
   region            String?
   sector            String?

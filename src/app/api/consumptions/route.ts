@@ -34,11 +34,13 @@ function calculatePreviousReading(currentRead: number, recordedConsumption: numb
 // GET: جلب البيانات من قاعدة البيانات
 export async function GET() {
   try {
+    const consumerTypes = await prisma.consumerType.findMany();
     const subscribers = await prisma.subscriber.findMany({
       include: {
         consumptions: {
           orderBy: { periodNo: 'asc' }
-        }
+        },
+        consumerType: true
       }
     });
 
@@ -47,7 +49,8 @@ export async function GET() {
         error: 'لا توجد بيانات متاحة. يرجى رفع ملف Excel.',
         consumptions: [],
         subscribers: [],
-        subscribersInfo: []
+        subscribersInfo: [],
+        consumerTypes: consumerTypes.map(c => ({ code: c.code, description: c.description }))
       });
     }
 
@@ -85,7 +88,7 @@ export async function GET() {
       تاريخ_النصب: sub.installDate || '',
       اخر_تسديد: sub.lastPayment || 0,
       تاريخ_اخر_تسديد: sub.lastPaymentDate || '',
-      صنف_المستهلك: sub.consumerType || '',
+      صنف_المستهلك: sub.consumerType?.description || '',
       العنوان: sub.address || '',
       المنطقة: sub.region || '',
       القطاع: sub.sector || '',
@@ -117,7 +120,8 @@ export async function GET() {
     return NextResponse.json({
       consumptions,
       subscribers: subscribersSummary,
-      subscribersInfo
+      subscribersInfo,
+      consumerTypes: consumerTypes.map(c => ({ code: c.code, description: c.description }))
     });
   } catch (error) {
     console.error('Error fetching data:', error);
@@ -155,6 +159,33 @@ export async function POST(request: NextRequest) {
     await prisma.subscriber.deleteMany();
     console.log('تم حذف البيانات القديمة');
 
+    // استيراد أصناف المستهلكين من ملف custtypeind.xlsx إذا كان موجوداً
+    const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
+    let consumerTypesMap = new Map<number, string>();
+    
+    if (fs.existsSync(consumerTypePath)) {
+      console.log('جاري استيراد أصناف المستهلكين...');
+      const consumerTypeBuffer = fs.readFileSync(consumerTypePath);
+      const consumerTypeWorkbook = XLSX.read(consumerTypeBuffer, { type: 'buffer' });
+      const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
+      const consumerTypeData = XLSX.utils.sheet_to_json(consumerTypeSheet) as Array<{ c_custcode: number; c_custdesc: string }>;
+      
+      // حذف الأصناف القديمة
+      await prisma.consumerType.deleteMany();
+      
+      // إضافة الأصناف الجديدة
+      for (const row of consumerTypeData) {
+        const code = Number(row.c_custcode) || 0;
+        const description = String(row.c_custdesc || 'غير محدد');
+        consumerTypesMap.set(code, description);
+        
+        await prisma.consumerType.create({
+          data: { code, description }
+        });
+      }
+      console.log(`تم استيراد ${consumerTypesMap.size} صنف مستهلك`);
+    }
+
     // معالجة البيانات الجديدة
     const subscribersData: Array<{
       accountNo: string;
@@ -170,7 +201,7 @@ export async function POST(request: NextRequest) {
       installDate: string;
       lastPayment: number;
       lastPaymentDate: string;
-      consumerType: string;
+      consumerTypeCode: number | null;
       address: string;
       region: string;
       sector: string;
@@ -281,6 +312,7 @@ export async function POST(request: NextRequest) {
       consumptions.sort((a, b) => a.periodNo - b.periodNo);
       
       const actualTotal = factor > 1 ? Math.round(totalConsum / factor) : totalConsum;
+      const consumerTypeCode = Number(row['m_cust']) || null;
       
       subscribersData.push({
         accountNo,
@@ -296,7 +328,7 @@ export async function POST(request: NextRequest) {
         installDate: formatDate(row['m_meterdt']),
         lastPayment: Number(row['m_payment']) || 0,
         lastPaymentDate: formatDate(row['m_paydt']),
-        consumerType: String(row['m_cust'] || ''),
+        consumerTypeCode,
         address: String(row['m_address'] || ''),
         region: String(row['m_region'] || ''),
         sector: String(row['m_sect'] || ''),
@@ -333,7 +365,7 @@ export async function POST(request: NextRequest) {
           installDate: sub.installDate || null,
           lastPayment: sub.lastPayment || null,
           lastPaymentDate: sub.lastPaymentDate || null,
-          consumerType: sub.consumerType || null,
+          consumerTypeCode: sub.consumerTypeCode,
           address: sub.address || null,
           region: sub.region || null,
           sector: sub.sector || null,
@@ -374,7 +406,8 @@ export async function POST(request: NextRequest) {
       success: true,
       message: `تم حفظ ${subscribersData.length.toLocaleString()} مشترك و ${totalConsumptions.toLocaleString()} سجل استهلاك`,
       subscribersCount: subscribersData.length,
-      consumptionsCount: totalConsumptions
+      consumptionsCount: totalConsumptions,
+      consumerTypesCount: consumerTypesMap.size
     });
     
   } catch (error) {
