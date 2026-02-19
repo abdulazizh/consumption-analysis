@@ -64,3 +64,10 @@ server.log
 *.mdb
 *.accdb
 src/data/consumptions.json
+
+# Database files
+*.db
+*.db-journal
+prisma/consumptions.db
+prisma/consumptions.db-journal
+data/consumption.db
