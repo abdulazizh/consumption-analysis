@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import * as path from "path";
-import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+// Dynamic import for Prisma client
+let prisma: any = null;
+
+async function getPrisma() {
+  if (!prisma) {
+    const { PrismaClient } = await import("@prisma/client");
+    prisma = new PrismaClient();
+  }
+  return prisma;
+}
 
 const METER_MAX = 100000;
 
@@ -34,8 +42,10 @@ function calculatePreviousReading(currentRead: number, recordedConsumption: numb
 // GET: جلب البيانات من قاعدة البيانات
 export async function GET() {
   try {
-    const consumerTypes = await prisma.consumerType.findMany();
-    const subscribers = await prisma.subscriber.findMany({
+    const db = await getPrisma();
+    
+    const consumerTypes = await db.consumerType.findMany();
+    const subscribers = await db.subscriber.findMany({
       include: {
         consumptions: {
           orderBy: { periodNo: 'asc' }
@@ -50,13 +60,12 @@ export async function GET() {
         consumptions: [],
         subscribers: [],
         subscribersInfo: [],
-        consumerTypes: consumerTypes.map(c => ({ code: c.code, description: c.description }))
+        consumerTypes: consumerTypes.map((c: any) => ({ code: c.code, description: c.description }))
       });
     }
 
-    // تحويل البيانات للتنسيق المطلوب
-    const consumptions = subscribers.flatMap(sub => 
-      sub.consumptions.map(c => ({
+    const consumptions = subscribers.flatMap((sub: any) => 
+      sub.consumptions.map((c: any) => ({
         رقم_الحساب: sub.accountNo,
         اسم_المشترك: sub.name,
         رقم_المقياس: sub.meterNo || '',
@@ -74,7 +83,7 @@ export async function GET() {
       }))
     );
 
-    const subscribersInfo = subscribers.map(sub => ({
+    const subscribersInfo = subscribers.map((sub: any) => ({
       رقم_الحساب: sub.accountNo,
       رقم_الحساب_القديم: sub.oldAccountNo || '',
       اسم_المشترك: sub.name,
@@ -104,7 +113,7 @@ export async function GET() {
       متوسط_المعدل: sub.avgRate,
     }));
 
-    const subscribersSummary = subscribers.map(sub => ({
+    const subscribersSummary = subscribers.map((sub: any) => ({
       رقم_الحساب: sub.accountNo,
       رقم_الحساب_القديم: sub.oldAccountNo || '',
       اسم_المشترك: sub.name,
@@ -121,12 +130,12 @@ export async function GET() {
       consumptions,
       subscribers: subscribersSummary,
       subscribersInfo,
-      consumerTypes: consumerTypes.map(c => ({ code: c.code, description: c.description }))
+      consumerTypes: consumerTypes.map((c: any) => ({ code: c.code, description: c.description }))
     });
   } catch (error) {
     console.error('Error fetching data:', error);
     return NextResponse.json({ 
-      error: 'حدث خطأ في تحميل البيانات',
+      error: 'حدث خطأ في تحميل البيانات: ' + (error instanceof Error ? error.message : String(error)),
       consumptions: [],
       subscribers: [],
       subscribersInfo: []
@@ -137,6 +146,8 @@ export async function GET() {
 // POST: رفع ملف Excel وحفظ البيانات في قاعدة البيانات
 export async function POST(request: NextRequest) {
   try {
+    const db = await getPrisma();
+    
     const formData = await request.formData();
     const file = formData.get('file') as File;
     
@@ -147,19 +158,16 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     
-    // معالجة ملف Excel
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
 
-    // حذف جميع البيانات القديمة
     console.log('جاري حذف البيانات القديمة...');
-    await prisma.consumption.deleteMany();
-    await prisma.subscriber.deleteMany();
+    await db.consumption.deleteMany();
+    await db.subscriber.deleteMany();
     console.log('تم حذف البيانات القديمة');
 
-    // استيراد أصناف المستهلكين من ملف custtypeind.xlsx إذا كان موجوداً
     const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
     let consumerTypesMap = new Map<number, string>();
     
@@ -170,64 +178,21 @@ export async function POST(request: NextRequest) {
       const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
       const consumerTypeData = XLSX.utils.sheet_to_json(consumerTypeSheet) as Array<{ c_custcode: number; c_custdesc: string }>;
       
-      // حذف الأصناف القديمة
-      await prisma.consumerType.deleteMany();
+      await db.consumerType.deleteMany();
       
-      // إضافة الأصناف الجديدة
       for (const row of consumerTypeData) {
         const code = Number(row.c_custcode) || 0;
         const description = String(row.c_custdesc || 'غير محدد');
         consumerTypesMap.set(code, description);
         
-        await prisma.consumerType.create({
+        await db.consumerType.create({
           data: { code, description }
         });
       }
       console.log(`تم استيراد ${consumerTypesMap.size} صنف مستهلك`);
     }
 
-    // معالجة البيانات الجديدة
-    const subscribersData: Array<{
-      accountNo: string;
-      oldAccountNo: string;
-      name: string;
-      meterNo: string;
-      serial: string;
-      block: string;
-      property: string;
-      phase: string;
-      factor: number;
-      subscriptionNo: string;
-      installDate: string;
-      lastPayment: number;
-      lastPaymentDate: string;
-      consumerTypeCode: number | null;
-      address: string;
-      region: string;
-      sector: string;
-      classification: string;
-      currentReading: number;
-      currentDate: string;
-      prevReading: number;
-      prevDate: string;
-      totalConsumption: number;
-      periodCount: number;
-      avgConsumption: number;
-      avgDuration: number;
-      avgRate: number;
-      consumptions: Array<{
-        periodNo: number;
-        consumption: number;
-        actualConsumption: number;
-        duration: number;
-        prevReading: number;
-        prevDate: string;
-        nextReading: number;
-        nextDate: string;
-        rate: number;
-        factor: number;
-      }>;
-    }> = [];
+    const subscribersData: any[] = [];
 
     for (const row of data) {
       const accountNo = String(row['m_accountno'] || '');
@@ -247,21 +212,8 @@ export async function POST(request: NextRequest) {
       let totalConsum = 0;
       let totalDays = 0;
       
-      const consumptions: Array<{
-        periodNo: number;
-        consumption: number;
-        actualConsumption: number;
-        duration: number;
-        prevReading: number;
-        prevDate: string;
-        nextReading: number;
-        nextDate: string;
-        rate: number;
-        factor: number;
-      }> = [];
-      
-      // معالجة 12 فترة
-      const periodData: Array<{consumption: number; days: number; actual: number; rate: number}> = [];
+      const consumptions: any[] = [];
+      const periodData: any[] = [];
       
       for (let i = 1; i <= 12; i++) {
         const consum = Number(row[`M_CONSUM${i}`]) || 0;
@@ -277,7 +229,6 @@ export async function POST(request: NextRequest) {
         totalDays += periodDays;
       }
       
-      // حساب القراءات من الأحدث للأقدم
       let readAfter = currentRead;
       for (let i = periodData.length - 1; i >= 0; i--) {
         const p = periodData[i];
@@ -308,7 +259,6 @@ export async function POST(request: NextRequest) {
         readAfter = readBefore;
       }
       
-      // ترتيب حسب الفترة
       consumptions.sort((a, b) => a.periodNo - b.periodNo);
       
       const actualTotal = factor > 1 ? Math.round(totalConsum / factor) : totalConsum;
@@ -346,11 +296,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // حفظ في قاعدة البيانات
     console.log(`جاري حفظ ${subscribersData.length} مشترك...`);
     
     for (const sub of subscribersData) {
-      await prisma.subscriber.create({
+      await db.subscriber.create({
         data: {
           accountNo: sub.accountNo,
           oldAccountNo: sub.oldAccountNo || null,
@@ -380,7 +329,7 @@ export async function POST(request: NextRequest) {
           avgDuration: sub.avgDuration,
           avgRate: sub.avgRate,
           consumptions: {
-            create: sub.consumptions.map(c => ({
+            create: sub.consumptions.map((c: any) => ({
               periodNo: c.periodNo,
               consumption: c.consumption,
               actualConsumption: c.actualConsumption,
@@ -399,7 +348,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`تم حفظ ${subscribersData.length} مشترك بنجاح`);
     
-    // جلب البيانات للإرجاع
     const totalConsumptions = subscribersData.reduce((sum, s) => sum + s.consumptions.length, 0);
     
     return NextResponse.json({ 
