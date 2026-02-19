@@ -168,28 +168,36 @@ export async function POST(request: NextRequest) {
     await db.subscriber.deleteMany();
     console.log('تم حذف البيانات القديمة');
 
-    const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
+    // قراءة أصناف المستهلكين من قاعدة البيانات (لا يتم حذفها)
     let consumerTypesMap = new Map<number, string>();
+    const existingTypes = await db.consumerType.findMany();
+    for (const type of existingTypes) {
+      consumerTypesMap.set(type.code, type.description);
+    }
+    console.log(`تم تحميل ${consumerTypesMap.size} صنف مستهلك من قاعدة البيانات`);
     
-    if (fs.existsSync(consumerTypePath)) {
-      console.log('جاري استيراد أصناف المستهلكين...');
-      const consumerTypeBuffer = fs.readFileSync(consumerTypePath);
-      const consumerTypeWorkbook = XLSX.read(consumerTypeBuffer, { type: 'buffer' });
-      const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
-      const consumerTypeData = XLSX.utils.sheet_to_json(consumerTypeSheet) as Array<{ c_custcode: number; c_custdesc: string }>;
+    // استيراد أصناف المستهلكين من الملف إذا كان موجوداً وكانت القاعدة فارغة
+    if (existingTypes.length === 0) {
+      const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
       
-      await db.consumerType.deleteMany();
-      
-      for (const row of consumerTypeData) {
-        const code = Number(row.c_custcode) || 0;
-        const description = String(row.c_custdesc || 'غير محدد');
-        consumerTypesMap.set(code, description);
+      if (fs.existsSync(consumerTypePath)) {
+        console.log('جاري استيراد أصناف المستهلكين من الملف...');
+        const consumerTypeBuffer = fs.readFileSync(consumerTypePath);
+        const consumerTypeWorkbook = XLSX.read(consumerTypeBuffer, { type: 'buffer' });
+        const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
+        const consumerTypeData = XLSX.utils.sheet_to_json(consumerTypeSheet) as Array<{ c_custcode: number; c_custdesc: string }>;
         
-        await db.consumerType.create({
-          data: { code, description }
-        });
+        for (const row of consumerTypeData) {
+          const code = Number(row.c_custcode) || 0;
+          const description = String(row.c_custdesc || 'غير محدد');
+          consumerTypesMap.set(code, description);
+          
+          await db.consumerType.create({
+            data: { code, description }
+          });
+        }
+        console.log(`تم استيراد ${consumerTypesMap.size} صنف مستهلك`);
       }
-      console.log(`تم استيراد ${consumerTypesMap.size} صنف مستهلك`);
     }
 
     const subscribersData: any[] = [];
