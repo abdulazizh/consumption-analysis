@@ -6,7 +6,6 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "prebuild": "npx tsx scripts/generate-data.ts",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "postbuild": "cp -r src/data .next/standalone/src/ 2>/dev/null || true",
     "start": "NODE_ENV=production node .next/standalone/server.js -p 3001",
