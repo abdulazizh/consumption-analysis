@@ -57,19 +57,19 @@ export function DetailView({ subscriber, consumptions, chartData, darkMode, onBa
           <table className="hidden print:table w-full text-[9pt] mb-2 border-collapse">
             <tbody>
               <tr>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[12%]">المشترك</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[14%]">اسم المشترك</td>
                 <td className="border border-gray-300 px-1 py-0.5 font-bold text-black">{subscriber.اسم_المشترك}</td>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[12%]">الحساب</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[14%]">رقم الحساب</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.رقم_الحساب}</td>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[12%]">القديم</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold w-[14%]">الحساب القديم</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.رقم_الحساب_القديم || '-'}</td>
               </tr>
               <tr>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">المقياس</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">رقم المقياس</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.رقم_المقياس}</td>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">الاشتراك</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">رقم الاشتراك</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.رقم_الاشتراك || '-'}</td>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">النصب</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">تاريخ النصب</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.تاريخ_النصب || '-'}</td>
               </tr>
               <tr>
@@ -83,7 +83,7 @@ export function DetailView({ subscriber, consumptions, chartData, darkMode, onBa
               <tr>
                 <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">الطور</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.الطور || '-'}</td>
-                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">الضرب</td>
+                <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">معامل الضرب</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.معامل_الضرب || '-'}</td>
                 <td className="border border-gray-300 bg-gray-50 px-1 py-0.5 font-bold">الصنف</td>
                 <td className="border border-gray-300 px-1 py-0.5 text-black">{subscriber.صنف_المستهلك || '-'}</td>
