@@ -49,6 +49,10 @@ model Subscriber {
   avgConsumption    Int      @default(0)
   avgDuration       Int      @default(0)
   avgRate           Int      @default(0)
+  totalRequired     BigInt   @default(0)    // المجموع المطلوب (m_outs)
+  debt              BigInt   @default(0)    // الديون (m_prevouts)
+  separatedDebt     BigInt   @default(0)    // الدين المفصول (m_outs_bef17)
+  frozenDebt        BigInt   @default(0)    // الدين المجمد (m_outs_bf)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   consumptions      Consumption[]

@@ -3,6 +3,9 @@ import * as XLSX from "xlsx";
 import * as fs from "fs";
 import * as path from "path";
 
+// Increase timeout for large file uploads (5 minutes)
+export const maxDuration = 300;
+
 // Dynamic import for Prisma client
 let prisma: any = null;
 
@@ -111,6 +114,10 @@ export async function GET() {
       متوسط_الاستهلاك: sub.avgConsumption,
       متوسط_المدة: sub.avgDuration,
       متوسط_المعدل: sub.avgRate,
+      المجموع_المطلوب: Number(sub.totalRequired || 0),
+      الديون: Number(sub.debt || 0),
+      الدين_المفصول: Number(sub.separatedDebt || 0),
+      الدين_المجمد: Number(sub.frozenDebt || 0),
     }));
 
     const subscribersSummary = subscribers.map((sub: any) => ({
@@ -208,7 +215,6 @@ export async function POST(request: NextRequest) {
 
     const subscribersData: any[] = [];
     let skippedNoAccount = 0;
-    let skippedNoName = 0;
     let subscribersWithConsumptions = 0;
     let subscribersWithoutConsumptions = 0;
 
@@ -216,8 +222,7 @@ export async function POST(request: NextRequest) {
       const accountNo = String(row['m_accountno'] || '');
       if (!accountNo) { skippedNoAccount++; continue; }
       
-      const name = String(row['m_name'] || '');
-      if (!name) { skippedNoName++; continue; }
+      const name = String(row['m_name'] || 'غير محدد'); // استيراد حتى بدون اسم
       
       const factor = Number(row['m_facter']) || 1;
       let prevRead = Number(row['m_prevread']) || 0;
@@ -248,38 +253,51 @@ export async function POST(request: NextRequest) {
       }
       
       // حساب القراءات إذا كان هناك قراءة سابقة وتاريخ
+      // ترتيب البيانات من الأقدم إلى الأحدث
       if (prevRead > 0 && prevDate && periodData.length > 0) {
-        let readAfter = currentRead;
+        // عكس الترتيب ليكون من الأقدم إلى الأحدث
+        const reversedData = [...periodData].reverse();
+        
+        // حساب التاريخ الأقدم (نبدأ من الأقدم)
+        let totalDaysFromEnd = 0;
+        for (let i = 0; i < reversedData.length; i++) {
+          totalDaysFromEnd += reversedData[i].days;
+        }
+        
+        // أول قراءة (الأقدم)
+        let currentReadingStart = prevRead;
+        // نحسب القراءة عند بداية أول فترة
         for (let i = periodData.length - 1; i >= 0; i--) {
-          const p = periodData[i];
-          const readBefore = calculatePreviousReading(readAfter, p.consumption, factor);
-          
-          let dtAfter: Date, dtBefore: Date;
-          if (i === periodData.length - 1 && prevDate) {
-            dtAfter = new Date(prevDate);
-            dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
-          } else {
-            dtAfter = new Date(consumptions[consumptions.length - 1]?.prevDate || prevDate);
-            dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
-          }
+          currentReadingStart = calculatePreviousReading(currentReadingStart, periodData[i].consumption, factor);
+        }
+        
+        let currentReading = currentReadingStart;
+        let currentDate = new Date(prevDate);
+        // نرجع التاريخ للوراء بمقدار مجموع الأيام
+        currentDate = new Date(currentDate.getTime() - totalDaysFromEnd * 24 * 60 * 60 * 1000);
+        
+        for (let i = 0; i < reversedData.length; i++) {
+          const p = reversedData[i];
+          const nextDate = new Date(currentDate.getTime() + p.days * 24 * 60 * 60 * 1000);
+          const nextReading = currentReading + p.consumption;
           
           consumptions.push({
-            periodNo: periodData.length - i,
+            periodNo: i + 1, // ترقيم من الأقدم للأحدث
             consumption: p.consumption,
             actualConsumption: p.actual,
             duration: p.days,
-            prevReading: Math.round(readBefore),
-            prevDate: dtBefore.toISOString().split('T')[0],
-            nextReading: Math.round(readAfter),
-            nextDate: dtAfter.toISOString().split('T')[0],
+            prevReading: Math.round(currentReading),
+            prevDate: currentDate.toISOString().split('T')[0],
+            nextReading: Math.round(nextReading),
+            nextDate: nextDate.toISOString().split('T')[0],
             rate: p.rate,
             factor: factor,
           });
           
-          readAfter = readBefore;
+          currentReading = nextReading;
+          currentDate = nextDate;
         }
         
-        consumptions.sort((a, b) => a.periodNo - b.periodNo);
         subscribersWithConsumptions++;
       } else {
         subscribersWithoutConsumptions++;
@@ -316,6 +334,11 @@ export async function POST(request: NextRequest) {
         avgConsumption: periodData.length > 0 ? Math.round(totalConsum / periodData.length) : 0,
         avgDuration: periodData.length > 0 ? Math.round(totalDays / periodData.length) : 0,
         avgRate: totalDays > 0 ? Math.round(actualTotal / totalDays) : 0,
+        // الديون - تحويل إلى BigInt للقيم الكبيرة (تقريب للأرقام العشرية)
+        totalRequired: BigInt(Math.round(Number(row['m_outs'] || 0))),           // المجموع المطلوب
+        debt: BigInt(Math.round(Number(row['m_prevouts'] || 0))),                // الديون
+        separatedDebt: BigInt(Math.round(Number(row['m_outs_bef17'] || 0))),     // الدين المفصول
+        frozenDebt: BigInt(Math.round(Number(row['m_outs_bf'] || 0))),           // الدين المجمد
         consumptions,
       });
     }
@@ -323,7 +346,6 @@ export async function POST(request: NextRequest) {
     console.log('───────────────────────────────────────────────────────────');
     console.log('📊 تحليل البيانات:');
     console.log('   • صفحات تم تخطيها (بدون رقم حساب):', skippedNoAccount);
-    console.log('   • صفحات تم تخطيها (بدون اسم):', skippedNoName);
     console.log('   • مشتركين بسجلات استهلاك:', subscribersWithConsumptions);
     console.log('   • مشتركين بدون سجلات استهلاك:', subscribersWithoutConsumptions);
     console.log('   • إجمالي المشتركين للاستيراد:', subscribersData.length);
@@ -364,6 +386,10 @@ export async function POST(request: NextRequest) {
             avgConsumption: sub.avgConsumption,
             avgDuration: sub.avgDuration,
             avgRate: sub.avgRate,
+            totalRequired: sub.totalRequired,
+            debt: sub.debt,
+            separatedDebt: sub.separatedDebt,
+            frozenDebt: sub.frozenDebt,
             consumptions: {
               create: sub.consumptions.map((c: any) => ({
                 periodNo: c.periodNo,
@@ -404,8 +430,7 @@ export async function POST(request: NextRequest) {
         subscribersWithoutConsumptions,
         consumptionsImported: totalConsumptions,
         consumerTypesCount: consumerTypesMap.size,
-        skippedNoAccount,
-        skippedNoName
+        skippedNoAccount
       }
     });
     
