@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// جدول أصناف المستهلكين
+model ConsumerType {
+  id          String   @id @default(cuid())
+  code        Int      @unique
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  subscribers Subscriber[]
+}
+
+// جدول المشتركين
+model Subscriber {
+  id                String   @id @default(cuid())
+  accountNo         String   @unique
+  oldAccountNo      String?
+  name              String
+  meterNo           String?
+  serial            String?
+  block             String?
+  property          String?
+  phase             String?
+  factor            Int      @default(1)
+  subscriptionNo    String?
+  installDate       String?
+  lastPayment       Int?
+  lastPaymentDate   String?
+  consumerTypeCode  Int?
+  consumerType      ConsumerType?  @relation(fields: [consumerTypeCode], references: [code])
+  address           String?
+  region            String?
+  sector            String?
+  classification    String?
+  currentReading    Int?
+  currentDate       String?
+  prevReading       Int?
+  prevDate          String?
+  totalConsumption  Int      @default(0)
+  periodCount       Int      @default(0)
+  avgConsumption    Int      @default(0)
+  avgDuration       Int      @default(0)
+  avgRate           Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  consumptions      Consumption[]
+}
+
+// جدول سجلات الاستهلاك
+model Consumption {
+  id              String   @id @default(cuid())
+  subscriberId    String
+  periodNo        Int
+  consumption     Int
+  actualConsumption Int
+  duration        Int
+  prevReading     Int
+  prevDate        String
+  nextReading     Int
+  nextDate        String
+  rate            Int
+  factor          Int      @default(1)
+  createdAt       DateTime @default(now())
+  subscriber      Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  
+  @@index([subscriberId])
+}
