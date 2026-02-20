@@ -98,22 +98,59 @@ export default function Home() {
     finally { setLoading(false) }
   }
 
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const [uploadDetails, setUploadDetails] = useState<any>(null)
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    
+    // تأكيد من المستخدم
+    const confirmed = confirm(
+      '⚠️ تنبيه هام!\n\n' +
+      'سيتم حذف جميع البيانات القديمة واستبدالها بالبيانات الجديدة.\n\n' +
+      'هل تريد المتابعة؟'
+    )
+    if (!confirmed) {
+      e.target.value = ''
+      return
+    }
+    
     setLoading(true)
+    setUploadStatus('جاري رفع الملف...')
+    setUploadDetails(null)
+    setError(null)
+    
     const formData = new FormData()
     formData.append('file', file)
+    
     try {
+      setUploadStatus('جاري استيراد البيانات...')
       const response = await fetch('/api/consumptions', { method: 'POST', body: formData })
       const data = await response.json()
-      if (!data.error) {
-        setConsumptions(data.consumptions || [])
-        setSubscribers(data.subscribers || [])
-        setSubscribersInfo(data.subscribersInfo || [])
+      
+      if (data.error) {
+        setError(data.error)
+        setUploadStatus(null)
+      } else {
+        setUploadStatus(data.message)
+        setUploadDetails(data.details)
+        // إعادة تحميل البيانات
+        await fetchData()
+        // إخفاء الرسالة بعد 5 ثواني
+        setTimeout(() => {
+          setUploadStatus(null)
+          setUploadDetails(null)
+        }, 5000)
       }
-    } catch {} 
-    finally { setLoading(false) }
+    } catch (err) {
+      setError('حدث خطأ في رفع الملف')
+      setUploadStatus(null)
+    } 
+    finally { 
+      setLoading(false)
+      e.target.value = ''
+    }
   }
 
   const filteredSubscribers = useMemo(() => {
@@ -185,7 +222,7 @@ export default function Home() {
               <button onClick={() => setDarkMode(!darkMode)} className={`p-2.5 rounded-xl ${darkMode ? 'bg-slate-700 text-yellow-400' : 'bg-gray-100 text-slate-600'}`}>
                 {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-              <label className={`p-2.5 rounded-xl ${darkMode ? 'bg-slate-700 text-blue-400' : 'bg-gray-100 text-blue-600'} cursor-pointer`}>
+              <label className={`p-2.5 rounded-xl ${darkMode ? 'bg-slate-700 text-blue-400 hover:bg-slate-600' : 'bg-gray-100 text-blue-600 hover:bg-gray-200'} cursor-pointer transition-colors`} title="رفع ملف Excel جديد">
                 <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
                 <FileText className="w-4 h-4" />
               </label>
@@ -207,6 +244,32 @@ export default function Home() {
         </div>
 
         {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-center mb-6">{error}</div>}
+
+        {uploadStatus && (
+          <div className={`bg-green-500/10 border border-green-500/30 rounded-xl p-4 mb-6 ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
+            <div className="text-center font-bold mb-2">✅ {uploadStatus}</div>
+            {uploadDetails && (
+              <div className={`text-sm ${darkMode ? 'text-green-300' : 'text-green-700'} grid grid-cols-2 md:grid-cols-4 gap-2 text-center`}>
+                <div className="bg-black/10 rounded-lg p-2">
+                  <div className="text-lg font-bold">{uploadDetails.subscribersImported?.toLocaleString()}</div>
+                  <div className="text-xs opacity-75">مشترك</div>
+                </div>
+                <div className="bg-black/10 rounded-lg p-2">
+                  <div className="text-lg font-bold">{uploadDetails.consumptionsImported?.toLocaleString()}</div>
+                  <div className="text-xs opacity-75">سجل استهلاك</div>
+                </div>
+                <div className="bg-black/10 rounded-lg p-2">
+                  <div className="text-lg font-bold text-amber-400">{uploadDetails.subscribersWithoutConsumptions?.toLocaleString()}</div>
+                  <div className="text-xs opacity-75">بدون قراءات</div>
+                </div>
+                <div className="bg-black/10 rounded-lg p-2">
+                  <div className="text-lg font-bold">{uploadDetails.consumerTypesCount}</div>
+                  <div className="text-xs opacity-75">صنف مستهلك</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {searchTerm && filteredSubscribers.length === 0 && !loading && (
           <div className={`text-center py-12 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>

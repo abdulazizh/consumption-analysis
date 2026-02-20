@@ -163,10 +163,16 @@ export async function POST(request: NextRequest) {
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
 
-    console.log('جاري حذف البيانات القديمة...');
-    await db.consumption.deleteMany();
-    await db.subscriber.deleteMany();
-    console.log('تم حذف البيانات القديمة');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📁 بدء استيراد البيانات من ملف:', file.name);
+    console.log('📊 إجمالي الصفوف في الملف:', data.length);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    // حذف البيانات القديمة
+    console.log('🗑️ جاري حذف البيانات القديمة...');
+    const deletedConsumptions = await db.consumption.deleteMany();
+    const deletedSubscribers = await db.subscriber.deleteMany();
+    console.log('✅ تم حذف:', deletedSubscribers.count, 'مشترك و', deletedConsumptions.count, 'سجل استهلاك');
 
     // قراءة أصناف المستهلكين من قاعدة البيانات (لا يتم حذفها)
     let consumerTypesMap = new Map<number, string>();
@@ -174,14 +180,14 @@ export async function POST(request: NextRequest) {
     for (const type of existingTypes) {
       consumerTypesMap.set(type.code, type.description);
     }
-    console.log(`تم تحميل ${consumerTypesMap.size} صنف مستهلك من قاعدة البيانات`);
+    console.log('📋 تم تحميل', consumerTypesMap.size, 'صنف مستهلك من قاعدة البيانات');
     
     // استيراد أصناف المستهلكين من الملف إذا كان موجوداً وكانت القاعدة فارغة
     if (existingTypes.length === 0) {
       const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
       
       if (fs.existsSync(consumerTypePath)) {
-        console.log('جاري استيراد أصناف المستهلكين من الملف...');
+        console.log('📥 جاري استيراد أصناف المستهلكين من الملف...');
         const consumerTypeBuffer = fs.readFileSync(consumerTypePath);
         const consumerTypeWorkbook = XLSX.read(consumerTypeBuffer, { type: 'buffer' });
         const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
@@ -196,26 +202,29 @@ export async function POST(request: NextRequest) {
             data: { code, description }
           });
         }
-        console.log(`تم استيراد ${consumerTypesMap.size} صنف مستهلك`);
+        console.log('✅ تم استيراد', consumerTypesMap.size, 'صنف مستهلك');
       }
     }
 
     const subscribersData: any[] = [];
+    let skippedNoAccount = 0;
+    let skippedNoName = 0;
+    let subscribersWithConsumptions = 0;
+    let subscribersWithoutConsumptions = 0;
 
     for (const row of data) {
       const accountNo = String(row['m_accountno'] || '');
-      if (!accountNo) continue;
+      if (!accountNo) { skippedNoAccount++; continue; }
       
       const name = String(row['m_name'] || '');
-      if (!name) continue;
+      if (!name) { skippedNoName++; continue; }
       
       const factor = Number(row['m_facter']) || 1;
       let prevRead = Number(row['m_prevread']) || 0;
       const prevDt = row['m_prevdt'];
+      const prevDate = prevDt ? formatDate(prevDt) : '';
       
-      if (prevRead === 0 || !prevDt) continue;
-      
-      const prevDate = formatDate(prevDt);
+      // استيراد المشترك حتى لو لم يكن لديه قراءات
       let currentRead = prevRead;
       let totalConsum = 0;
       let totalDays = 0;
@@ -223,6 +232,7 @@ export async function POST(request: NextRequest) {
       const consumptions: any[] = [];
       const periodData: any[] = [];
       
+      // تجميع بيانات الاستهلاك
       for (let i = 1; i <= 12; i++) {
         const consum = Number(row[`M_CONSUM${i}`]) || 0;
         const periodDays = Number(row[`M_PERIOD${i}`]) || 0;
@@ -237,37 +247,43 @@ export async function POST(request: NextRequest) {
         totalDays += periodDays;
       }
       
-      let readAfter = currentRead;
-      for (let i = periodData.length - 1; i >= 0; i--) {
-        const p = periodData[i];
-        const readBefore = calculatePreviousReading(readAfter, p.consumption, factor);
-        
-        let dtAfter: Date, dtBefore: Date;
-        if (i === periodData.length - 1 && prevDate) {
-          dtAfter = new Date(prevDate);
-          dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
-        } else {
-          dtAfter = new Date(consumptions[consumptions.length - 1]?.prevDate || prevDate);
-          dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
+      // حساب القراءات إذا كان هناك قراءة سابقة وتاريخ
+      if (prevRead > 0 && prevDate && periodData.length > 0) {
+        let readAfter = currentRead;
+        for (let i = periodData.length - 1; i >= 0; i--) {
+          const p = periodData[i];
+          const readBefore = calculatePreviousReading(readAfter, p.consumption, factor);
+          
+          let dtAfter: Date, dtBefore: Date;
+          if (i === periodData.length - 1 && prevDate) {
+            dtAfter = new Date(prevDate);
+            dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
+          } else {
+            dtAfter = new Date(consumptions[consumptions.length - 1]?.prevDate || prevDate);
+            dtBefore = new Date(dtAfter.getTime() - p.days * 24 * 60 * 60 * 1000);
+          }
+          
+          consumptions.push({
+            periodNo: periodData.length - i,
+            consumption: p.consumption,
+            actualConsumption: p.actual,
+            duration: p.days,
+            prevReading: Math.round(readBefore),
+            prevDate: dtBefore.toISOString().split('T')[0],
+            nextReading: Math.round(readAfter),
+            nextDate: dtAfter.toISOString().split('T')[0],
+            rate: p.rate,
+            factor: factor,
+          });
+          
+          readAfter = readBefore;
         }
         
-        consumptions.push({
-          periodNo: periodData.length - i,
-          consumption: p.consumption,
-          actualConsumption: p.actual,
-          duration: p.days,
-          prevReading: Math.round(readBefore),
-          prevDate: dtBefore.toISOString().split('T')[0],
-          nextReading: Math.round(readAfter),
-          nextDate: dtAfter.toISOString().split('T')[0],
-          rate: p.rate,
-          factor: factor,
-        });
-        
-        readAfter = readBefore;
+        consumptions.sort((a, b) => a.periodNo - b.periodNo);
+        subscribersWithConsumptions++;
+      } else {
+        subscribersWithoutConsumptions++;
       }
-      
-      consumptions.sort((a, b) => a.periodNo - b.periodNo);
       
       const actualTotal = factor > 1 ? Math.round(totalConsum / factor) : totalConsum;
       const consumerTypeCode = Number(row['m_cust']) || null;
@@ -291,10 +307,10 @@ export async function POST(request: NextRequest) {
         region: String(row['m_region'] || ''),
         sector: String(row['m_sect'] || ''),
         classification: String(row['M_CLASSFY'] || ''),
-        currentReading: Number(row['m_lastread']) || prevRead,
+        currentReading: Number(row['m_lastread']) || prevRead || null,
         currentDate: formatDate(row['m_lastdt']),
-        prevReading: prevRead,
-        prevDate,
+        prevReading: prevRead || null,
+        prevDate: prevDate || null,
         totalConsumption: totalConsum,
         periodCount: periodData.length,
         avgConsumption: periodData.length > 0 ? Math.round(totalConsum / periodData.length) : 0,
@@ -304,70 +320,97 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    console.log(`جاري حفظ ${subscribersData.length} مشترك...`);
+    console.log('───────────────────────────────────────────────────────────');
+    console.log('📊 تحليل البيانات:');
+    console.log('   • صفحات تم تخطيها (بدون رقم حساب):', skippedNoAccount);
+    console.log('   • صفحات تم تخطيها (بدون اسم):', skippedNoName);
+    console.log('   • مشتركين بسجلات استهلاك:', subscribersWithConsumptions);
+    console.log('   • مشتركين بدون سجلات استهلاك:', subscribersWithoutConsumptions);
+    console.log('   • إجمالي المشتركين للاستيراد:', subscribersData.length);
+    console.log('───────────────────────────────────────────────────────────');
+    console.log('💾 جاري حفظ', subscribersData.length, 'مشترك في قاعدة البيانات...');
     
-    for (const sub of subscribersData) {
-      await db.subscriber.create({
-        data: {
-          accountNo: sub.accountNo,
-          oldAccountNo: sub.oldAccountNo || null,
-          name: sub.name,
-          meterNo: sub.meterNo || null,
-          serial: sub.serial || null,
-          block: sub.block || null,
-          property: sub.property || null,
-          phase: sub.phase || null,
-          factor: sub.factor,
-          subscriptionNo: sub.subscriptionNo || null,
-          installDate: sub.installDate || null,
-          lastPayment: sub.lastPayment || null,
-          lastPaymentDate: sub.lastPaymentDate || null,
-          consumerTypeCode: sub.consumerTypeCode,
-          address: sub.address || null,
-          region: sub.region || null,
-          sector: sub.sector || null,
-          classification: sub.classification || null,
-          currentReading: sub.currentReading || null,
-          currentDate: sub.currentDate || null,
-          prevReading: sub.prevReading || null,
-          prevDate: sub.prevDate || null,
-          totalConsumption: sub.totalConsumption,
-          periodCount: sub.periodCount,
-          avgConsumption: sub.avgConsumption,
-          avgDuration: sub.avgDuration,
-          avgRate: sub.avgRate,
-          consumptions: {
-            create: sub.consumptions.map((c: any) => ({
-              periodNo: c.periodNo,
-              consumption: c.consumption,
-              actualConsumption: c.actualConsumption,
-              duration: c.duration,
-              prevReading: c.prevReading,
-              prevDate: c.prevDate,
-              nextReading: c.nextReading,
-              nextDate: c.nextDate,
-              rate: c.rate,
-              factor: c.factor,
-            }))
+    // حفظ البيانات بشكل متوازي (batch)
+    const batchSize = 100;
+    for (let i = 0; i < subscribersData.length; i += batchSize) {
+      const batch = subscribersData.slice(i, i + batchSize);
+      for (const sub of batch) {
+        await db.subscriber.create({
+          data: {
+            accountNo: sub.accountNo,
+            oldAccountNo: sub.oldAccountNo || null,
+            name: sub.name,
+            meterNo: sub.meterNo || null,
+            serial: sub.serial || null,
+            block: sub.block || null,
+            property: sub.property || null,
+            phase: sub.phase || null,
+            factor: sub.factor,
+            subscriptionNo: sub.subscriptionNo || null,
+            installDate: sub.installDate || null,
+            lastPayment: sub.lastPayment || null,
+            lastPaymentDate: sub.lastPaymentDate || null,
+            consumerTypeCode: sub.consumerTypeCode,
+            address: sub.address || null,
+            region: sub.region || null,
+            sector: sub.sector || null,
+            classification: sub.classification || null,
+            currentReading: sub.currentReading || null,
+            currentDate: sub.currentDate || null,
+            prevReading: sub.prevReading || null,
+            prevDate: sub.prevDate || null,
+            totalConsumption: sub.totalConsumption,
+            periodCount: sub.periodCount,
+            avgConsumption: sub.avgConsumption,
+            avgDuration: sub.avgDuration,
+            avgRate: sub.avgRate,
+            consumptions: {
+              create: sub.consumptions.map((c: any) => ({
+                periodNo: c.periodNo,
+                consumption: c.consumption,
+                actualConsumption: c.actualConsumption,
+                duration: c.duration,
+                prevReading: c.prevReading,
+                prevDate: c.prevDate,
+                nextReading: c.nextReading,
+                nextDate: c.nextDate,
+                rate: c.rate,
+                factor: c.factor,
+              }))
+            }
           }
-        }
-      });
+        });
+      }
+      const progress = Math.min(i + batchSize, subscribersData.length);
+      console.log('   ⏳ تم حفظ:', progress, 'من', subscribersData.length, 'مشترك');
     }
 
-    console.log(`تم حفظ ${subscribersData.length} مشترك بنجاح`);
-    
     const totalConsumptions = subscribersData.reduce((sum, s) => sum + s.consumptions.length, 0);
+    
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('✅ تم استيراد البيانات بنجاح!');
+    console.log('   📊 إجمالي المشتركين:', subscribersData.length.toLocaleString());
+    console.log('   📈 سجلات الاستهلاك:', totalConsumptions.toLocaleString());
+    console.log('   📋 أصناف المستهلكين:', consumerTypesMap.size);
+    console.log('═══════════════════════════════════════════════════════════');
     
     return NextResponse.json({ 
       success: true,
-      message: `تم حفظ ${subscribersData.length.toLocaleString()} مشترك و ${totalConsumptions.toLocaleString()} سجل استهلاك`,
-      subscribersCount: subscribersData.length,
-      consumptionsCount: totalConsumptions,
-      consumerTypesCount: consumerTypesMap.size
+      message: `تم استيراد ${subscribersData.length.toLocaleString()} مشترك و ${totalConsumptions.toLocaleString()} سجل استهلاك بنجاح`,
+      details: {
+        totalRows: data.length,
+        subscribersImported: subscribersData.length,
+        subscribersWithConsumptions,
+        subscribersWithoutConsumptions,
+        consumptionsImported: totalConsumptions,
+        consumerTypesCount: consumerTypesMap.size,
+        skippedNoAccount,
+        skippedNoName
+      }
     });
     
   } catch (error) {
-    console.error('Error uploading file:', error);
+    console.error('❌ Error uploading file:', error);
     return NextResponse.json({ 
       error: 'حدث خطأ في رفع الملف: ' + (error instanceof Error ? error.message : String(error))
     }, { status: 500 });
