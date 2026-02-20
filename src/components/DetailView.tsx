@@ -146,19 +146,19 @@ export function DetailView({ subscriber, consumptions, chartData, darkMode, onBa
               
               {/* الديون */}
               <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-slate-700' : 'border-gray-100'} grid grid-cols-2 md:grid-cols-4 gap-3 text-sm`}>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                   <span className={`${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>المجموع المطلوب:</span>
                   <span className="font-bold text-red-500 font-mono" dir="ltr">{subscriber.المجموع_المطلوب?.toLocaleString() || 0}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                   <span className={`${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>الديون:</span>
                   <span className="font-bold text-orange-500 font-mono" dir="ltr">{subscriber.الديون?.toLocaleString() || 0}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                   <span className={`${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>الدين المفصول:</span>
                   <span className="font-bold text-amber-500 font-mono" dir="ltr">{subscriber.الدين_المفصول?.toLocaleString() || 0}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                   <span className={`${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>الدين المجمد:</span>
                   <span className="font-bold text-yellow-500 font-mono" dir="ltr">{subscriber.الدين_المجمد?.toLocaleString() || 0}</span>
                 </div>
