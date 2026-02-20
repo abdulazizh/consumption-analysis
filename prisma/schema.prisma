@@ -7,17 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// جدول أصناف المستهلكين
-model ConsumerType {
-  id          String   @id @default(cuid())
-  code        Int      @unique
-  description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  subscribers Subscriber[]
-}
-
 // جدول المشتركين
 model Subscriber {
   id                String   @id @default(cuid())
@@ -34,8 +23,8 @@ model Subscriber {
   installDate       String?
   lastPayment       Int?
   lastPaymentDate   String?
-  consumerTypeCode  Int?
-  consumerType      ConsumerType?  @relation(fields: [consumerTypeCode], references: [code])
+  consumerTypeCode  Int?     // رمز الصنف (بدون علاقة خارجية)
+  consumerTypeDesc  String?  // وصف الصنف
   address           String?
   region            String?
   sector            String?

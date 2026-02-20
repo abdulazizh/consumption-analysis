@@ -1,10 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import * as fs from "fs";
-import * as path from "path";
 
 // Increase timeout for large file uploads (5 minutes)
 export const maxDuration = 300;
+
+// أصناف المستهلكين الثابتة (من قاعدة البيانات)
+const CONSUMER_TYPES: Record<number, string> = {
+  0: "بدون صنف",
+  1: "حكومي",
+  2: "حكومي",
+  4: "صناعي",
+  5: "صناعي",
+  6: "صناعي",
+  7: "صناعي",
+  8: "حكومي",
+  9: "تجاري",
+  17: "صناعي",
+  19: "تجاري",
+  21: "منزلي",
+  22: "زراعي",
+  23: "حكومي",
+  24: "تجاري",
+  26: "منزلي",
+  27: "منزلي",
+  28: "منزلي",
+  29: "منزلي",
+  33: "تجاري",
+  39: "منزلي",
+  101: "حكومي",
+  102: "حكومي",
+  104: "صناعي",
+  105: "صناعي",
+  106: "صناعي",
+  107: "صناعي",
+  108: "حكومي",
+  109: "تجاري",
+  117: "صناعي",
+  119: "تجاري",
+  121: "منزلي",
+  122: "زراعي",
+  123: "حكومي",
+  124: "تجاري",
+  126: "منزلي",
+  127: "منزلي",
+  128: "منزلي",
+  129: "منزلي",
+  133: "تجاري",
+  139: "منزلي",
+};
 
 // Dynamic import for Prisma client
 let prisma: any = null;
@@ -42,18 +85,21 @@ function calculatePreviousReading(currentRead: number, recordedConsumption: numb
   return prevRead;
 }
 
+function getConsumerTypeDescription(code: number | null): string {
+  if (!code) return '';
+  return CONSUMER_TYPES[code] || `صنف ${code}`;
+}
+
 // GET: جلب البيانات من قاعدة البيانات
 export async function GET() {
   try {
     const db = await getPrisma();
     
-    const consumerTypes = await db.consumerType.findMany();
     const subscribers = await db.subscriber.findMany({
       include: {
         consumptions: {
           orderBy: { periodNo: 'asc' }
-        },
-        consumerType: true
+        }
       }
     });
 
@@ -63,7 +109,7 @@ export async function GET() {
         consumptions: [],
         subscribers: [],
         subscribersInfo: [],
-        consumerTypes: consumerTypes.map((c: any) => ({ code: c.code, description: c.description }))
+        consumerTypes: Object.entries(CONSUMER_TYPES).map(([code, desc]) => ({ code: Number(code), description: desc }))
       });
     }
 
@@ -100,7 +146,7 @@ export async function GET() {
       تاريخ_النصب: sub.installDate || '',
       اخر_تسديد: sub.lastPayment || 0,
       تاريخ_اخر_تسديد: sub.lastPaymentDate || '',
-      صنف_المستهلك: sub.consumerType?.description || '',
+      صنف_المستهلك: sub.consumerTypeDesc || getConsumerTypeDescription(sub.consumerTypeCode),
       العنوان: sub.address || '',
       المنطقة: sub.region || '',
       القطاع: sub.sector || '',
@@ -137,7 +183,7 @@ export async function GET() {
       consumptions,
       subscribers: subscribersSummary,
       subscribersInfo,
-      consumerTypes: consumerTypes.map((c: any) => ({ code: c.code, description: c.description }))
+      consumerTypes: Object.entries(CONSUMER_TYPES).map(([code, desc]) => ({ code: Number(code), description: desc }))
     });
   } catch (error) {
     console.error('Error fetching data:', error);
@@ -181,38 +227,6 @@ export async function POST(request: NextRequest) {
     const deletedSubscribers = await db.subscriber.deleteMany();
     console.log('✅ تم حذف:', deletedSubscribers.count, 'مشترك و', deletedConsumptions.count, 'سجل استهلاك');
 
-    // قراءة أصناف المستهلكين من قاعدة البيانات (لا يتم حذفها)
-    let consumerTypesMap = new Map<number, string>();
-    const existingTypes = await db.consumerType.findMany();
-    for (const type of existingTypes) {
-      consumerTypesMap.set(type.code, type.description);
-    }
-    console.log('📋 تم تحميل', consumerTypesMap.size, 'صنف مستهلك من قاعدة البيانات');
-    
-    // استيراد أصناف المستهلكين من الملف إذا كان موجوداً وكانت القاعدة فارغة
-    if (existingTypes.length === 0) {
-      const consumerTypePath = path.join(process.cwd(), 'upload', 'custtypeind.xlsx');
-      
-      if (fs.existsSync(consumerTypePath)) {
-        console.log('📥 جاري استيراد أصناف المستهلكين من الملف...');
-        const consumerTypeBuffer = fs.readFileSync(consumerTypePath);
-        const consumerTypeWorkbook = XLSX.read(consumerTypeBuffer, { type: 'buffer' });
-        const consumerTypeSheet = consumerTypeWorkbook.Sheets[consumerTypeWorkbook.SheetNames[0]];
-        const consumerTypeData = XLSX.utils.sheet_to_json(consumerTypeSheet) as Array<{ c_custcode: number; c_custdesc: string }>;
-        
-        for (const row of consumerTypeData) {
-          const code = Number(row.c_custcode) || 0;
-          const description = String(row.c_custdesc || 'غير محدد');
-          consumerTypesMap.set(code, description);
-          
-          await db.consumerType.create({
-            data: { code, description }
-          });
-        }
-        console.log('✅ تم استيراد', consumerTypesMap.size, 'صنف مستهلك');
-      }
-    }
-
     const subscribersData: any[] = [];
     let skippedNoAccount = 0;
     let subscribersWithConsumptions = 0;
@@ -222,14 +236,13 @@ export async function POST(request: NextRequest) {
       const accountNo = String(row['m_accountno'] || '');
       if (!accountNo) { skippedNoAccount++; continue; }
       
-      const name = String(row['m_name'] || 'غير محدد'); // استيراد حتى بدون اسم
+      const name = String(row['m_name'] || 'غير محدد');
       
       const factor = Number(row['m_facter']) || 1;
       let prevRead = Number(row['m_prevread']) || 0;
       const prevDt = row['m_prevdt'];
       const prevDate = prevDt ? formatDate(prevDt) : '';
       
-      // استيراد المشترك حتى لو لم يكن لديه قراءات
       let currentRead = prevRead;
       let totalConsum = 0;
       let totalDays = 0;
@@ -253,27 +266,21 @@ export async function POST(request: NextRequest) {
       }
       
       // حساب القراءات إذا كان هناك قراءة سابقة وتاريخ
-      // ترتيب البيانات من الأقدم إلى الأحدث
       if (prevRead > 0 && prevDate && periodData.length > 0) {
-        // عكس الترتيب ليكون من الأقدم إلى الأحدث
         const reversedData = [...periodData].reverse();
         
-        // حساب التاريخ الأقدم (نبدأ من الأقدم)
         let totalDaysFromEnd = 0;
         for (let i = 0; i < reversedData.length; i++) {
           totalDaysFromEnd += reversedData[i].days;
         }
         
-        // أول قراءة (الأقدم)
         let currentReadingStart = prevRead;
-        // نحسب القراءة عند بداية أول فترة
         for (let i = periodData.length - 1; i >= 0; i--) {
           currentReadingStart = calculatePreviousReading(currentReadingStart, periodData[i].consumption, factor);
         }
         
         let currentReading = currentReadingStart;
         let currentDate = new Date(prevDate);
-        // نرجع التاريخ للوراء بمقدار مجموع الأيام
         currentDate = new Date(currentDate.getTime() - totalDaysFromEnd * 24 * 60 * 60 * 1000);
         
         for (let i = 0; i < reversedData.length; i++) {
@@ -282,7 +289,7 @@ export async function POST(request: NextRequest) {
           const nextReading = currentReading + p.consumption;
           
           consumptions.push({
-            periodNo: i + 1, // ترقيم من الأقدم للأحدث
+            periodNo: i + 1,
             consumption: p.consumption,
             actualConsumption: p.actual,
             duration: p.days,
@@ -305,6 +312,7 @@ export async function POST(request: NextRequest) {
       
       const actualTotal = factor > 1 ? Math.round(totalConsum / factor) : totalConsum;
       const consumerTypeCode = Number(row['m_cust']) || null;
+      const consumerTypeDesc = getConsumerTypeDescription(consumerTypeCode);
       
       subscribersData.push({
         accountNo,
@@ -321,6 +329,7 @@ export async function POST(request: NextRequest) {
         lastPayment: Number(row['m_payment']) || 0,
         lastPaymentDate: formatDate(row['m_paydt']),
         consumerTypeCode,
+        consumerTypeDesc,
         address: String(row['m_address'] || ''),
         region: String(row['m_region'] || ''),
         sector: String(row['m_sect'] || ''),
@@ -334,11 +343,10 @@ export async function POST(request: NextRequest) {
         avgConsumption: periodData.length > 0 ? Math.round(totalConsum / periodData.length) : 0,
         avgDuration: periodData.length > 0 ? Math.round(totalDays / periodData.length) : 0,
         avgRate: totalDays > 0 ? Math.round(actualTotal / totalDays) : 0,
-        // الديون - تحويل إلى BigInt للقيم الكبيرة (تقريب للأرقام العشرية)
-        totalRequired: BigInt(Math.round(Number(row['m_outs'] || 0))),           // المجموع المطلوب
-        debt: BigInt(Math.round(Number(row['m_prevouts'] || 0))),                // الديون
-        separatedDebt: BigInt(Math.round(Number(row['m_outs_bef17'] || 0))),     // الدين المفصول
-        frozenDebt: BigInt(Math.round(Number(row['m_outs_bf'] || 0))),           // الدين المجمد
+        totalRequired: BigInt(Math.round(Number(row['m_outs'] || 0))),
+        debt: BigInt(Math.round(Number(row['m_prevouts'] || 0))),
+        separatedDebt: BigInt(Math.round(Number(row['m_outs_bef17'] || 0))),
+        frozenDebt: BigInt(Math.round(Number(row['m_outs_bf'] || 0))),
         consumptions,
       });
     }
@@ -373,6 +381,7 @@ export async function POST(request: NextRequest) {
             lastPayment: sub.lastPayment || null,
             lastPaymentDate: sub.lastPaymentDate || null,
             consumerTypeCode: sub.consumerTypeCode,
+            consumerTypeDesc: sub.consumerTypeDesc,
             address: sub.address || null,
             region: sub.region || null,
             sector: sub.sector || null,
@@ -417,7 +426,6 @@ export async function POST(request: NextRequest) {
     console.log('✅ تم استيراد البيانات بنجاح!');
     console.log('   📊 إجمالي المشتركين:', subscribersData.length.toLocaleString());
     console.log('   📈 سجلات الاستهلاك:', totalConsumptions.toLocaleString());
-    console.log('   📋 أصناف المستهلكين:', consumerTypesMap.size);
     console.log('═══════════════════════════════════════════════════════════');
     
     return NextResponse.json({ 
@@ -429,7 +437,7 @@ export async function POST(request: NextRequest) {
         subscribersWithConsumptions,
         subscribersWithoutConsumptions,
         consumptionsImported: totalConsumptions,
-        consumerTypesCount: consumerTypesMap.size,
+        consumerTypesCount: Object.keys(CONSUMER_TYPES).length,
         skippedNoAccount
       }
     });
